@@ -1,0 +1,31 @@
+# Dependencies & Build Artifacts
+node_modules/
+dist/
+build/
+coverage/
+
+# Python Virtual Environments & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.pytest_cache/
+
+# Environment Secrets & Local Databases
+.env
+.env*
+!.env.example
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Generated Demo Artifacts & OS Files
+samples_output/
+.DS_Store
+Thumbs.db
+*.log

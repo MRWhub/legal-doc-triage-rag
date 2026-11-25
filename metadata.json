@@ -1,0 +1,6 @@
+{
+  "name": "JurisTriage",
+  "description": "Triagem inteligente de documentos jurídicos em PDF com extração estruturada via Gemini Flash, persistência SQLite e chat RAG ancorado por página.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
