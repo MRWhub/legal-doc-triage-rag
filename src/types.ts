@@ -39,3 +39,12 @@ export interface SampleDocumentInfo {
   summary: string;
   pageCount: number;
 }
+
+export interface AiModelOption {
+  id: string;
+  label: string;
+  provider: 'google' | 'groq';
+  description: string;
+  configured: boolean;
+  isDefault: boolean;
+}

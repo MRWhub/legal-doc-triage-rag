@@ -11,7 +11,11 @@ import {
   listChatMessages,
   listDocuments,
 } from './server/db.ts';
-import { answerDocumentQuestion, extractLegalMetadata } from './server/llmService.ts';
+import {
+  answerDocumentQuestion,
+  extractLegalMetadata,
+  listAvailableModels,
+} from './server/llmService.ts';
 import { extractPdfWithPages } from './server/pdfExtractor.ts';
 import { generateSamplePdfBuffer, listSampleDocuments } from './server/sampleGenerator.ts';
 
@@ -53,21 +57,34 @@ function getReadableErrorMessage(error: unknown): { status: number; message: str
     return {
       status: 502,
       message:
-        'A chave GEMINI_API_KEY foi recusada pela API do Google. Verifique a configuração em Settings > Secrets.',
+        'A chave da API foi recusada pelo provedor. Verifique a configuração em .env ou Settings > Secrets.',
     };
   }
-  if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) {
+  if (
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('UNAVAILABLE') ||
+    msg.includes('429') ||
+    msg.includes('503')
+  ) {
     return {
       status: 429,
       message:
-        'Limite temporário de requisições da API Gemini atingido. Aguarde alguns segundos e tente novamente.',
+        'Este modelo está temporariamente congestionado ou atingiu o limite de cota. Troque o modelo no seletor de IA (ex.: Gemini 3.1 Flash Lite ou Llama 3.3 Groq) e tente novamente.',
+    };
+  }
+  if (msg.includes('NOT_FOUND') || msg.includes('404')) {
+    return {
+      status: 400,
+      message:
+        'O modelo selecionado não está disponível para a sua chave de API atual. Selecione outro modelo no seletor de IA (ex.: Gemini 2.5 Flash para chaves locais ou Gemini 3.1 Flash Lite).',
     };
   }
   if (
     msg.includes('PDF') ||
     msg.includes('Arquivo inválido') ||
     msg.includes('extrair texto') ||
-    msg.includes('File too large')
+    msg.includes('File too large') ||
+    msg.includes('GROQ_API_KEY')
   ) {
     return { status: 400, message: msg };
   }
@@ -81,6 +98,10 @@ async function startServer() {
 
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', service: 'JurisTriage API' });
+  });
+
+  app.get('/api/models', (_req, res) => {
+    res.json({ models: listAvailableModels() });
   });
 
   app.get('/api/documents', (_req, res) => {
@@ -143,9 +164,15 @@ async function startServer() {
       }
 
       try {
+        const requestedModel =
+          typeof req.body?.model === 'string' ? req.body.model.trim() : undefined;
         const safeFilename = sanitizeFilename(req.file.originalname);
         const extracted = await extractPdfWithPages(req.file.buffer);
-        const structured = await extractLegalMetadata(extracted.text, safeFilename);
+        const structured = await extractLegalMetadata(
+          extracted.text,
+          safeFilename,
+          requestedModel
+        );
 
         const created = createDocument({
           filename: safeFilename,
@@ -170,6 +197,9 @@ async function startServer() {
     }
 
     const question = typeof req.body?.question === 'string' ? req.body.question.trim() : '';
+    const requestedModel =
+      typeof req.body?.model === 'string' ? req.body.model.trim() : undefined;
+
     if (!question || question.length < 2) {
       res.status(400).json({ error: 'Digite uma pergunta válida sobre o documento.' });
       return;
@@ -195,7 +225,8 @@ async function startServer() {
         document.raw_text,
         document.filename,
         question,
-        history
+        history,
+        requestedModel
       );
 
       const userMessage = createChatMessage(id, 'user', question, []);
@@ -248,6 +279,8 @@ async function startServer() {
   app.post('/api/samples/load', async (req, res) => {
     try {
       const requestedSlug = typeof req.body?.slug === 'string' ? req.body.slug.trim() : null;
+      const requestedModel =
+        typeof req.body?.model === 'string' ? req.body.model.trim() : undefined;
       const allSamples = listSampleDocuments();
       const targetSamples = requestedSlug
         ? allSamples.filter((s) => s.slug === requestedSlug)
@@ -263,7 +296,11 @@ async function startServer() {
         const generated = await generateSamplePdfBuffer(sample.slug);
         if (!generated) continue;
         const extracted = await extractPdfWithPages(generated.buffer);
-        const structured = await extractLegalMetadata(extracted.text, generated.filename);
+        const structured = await extractLegalMetadata(
+          extracted.text,
+          generated.filename,
+          requestedModel
+        );
         const doc = createDocument({
           filename: generated.filename,
           ...structured,

@@ -1,13 +1,17 @@
 import json
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 from backend.extractor import extract_pdf_text_with_pages
-from backend.llm_service import answer_document_question, extract_legal_metadata
+from backend.llm_service import (
+    answer_document_question,
+    extract_legal_metadata,
+    list_available_models,
+)
 from backend.models import ChatMessageModel, DocumentModel, get_db, init_db
 from backend.schemas import (
     ChatMessageResponse,
@@ -71,6 +75,11 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "JurisTriage FastAPI"}
 
 
+@app.get("/api/models")
+def get_models() -> dict[str, object]:
+    return {"models": list_available_models()}
+
+
 @app.get("/api/documents")
 def list_documents(db: Session = Depends(get_db)) -> dict[str, list[DocumentResponse]]:
     urgency_order = case(
@@ -106,6 +115,7 @@ def delete_document(document_id: int, db: Session = Depends(get_db)) -> dict[str
 @app.post("/api/documents/upload", status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
+    model: str | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> dict[str, DocumentResponse]:
     safe_name = Path(file.filename or "documento.pdf").name
@@ -118,7 +128,7 @@ async def upload_document(
 
     try:
         raw_text, page_count = extract_pdf_text_with_pages(content)
-        extracted = extract_legal_metadata(raw_text, safe_name)
+        extracted = extract_legal_metadata(raw_text, safe_name, requested_model=model)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -160,6 +170,7 @@ def chat_with_document(
             filename=doc.filename,
             question=payload.question.strip(),
             history=history,
+            requested_model=payload.model,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

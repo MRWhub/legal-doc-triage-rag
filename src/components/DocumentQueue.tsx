@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { FileUp, Loader2, Search, Sparkles } from 'lucide-react';
-import type { LegalDocument, UrgencyLevel } from '../types';
+import type { AiModelOption, LegalDocument, UrgencyLevel } from '../types';
 
 export type UrgencyFilter = 'ALL' | UrgencyLevel;
 
@@ -17,6 +17,9 @@ interface DocumentQueueProps {
   onSearchChange: (q: string) => void;
   urgencyFilter: UrgencyFilter;
   onUrgencyFilterChange: (f: UrgencyFilter) => void;
+  models: AiModelOption[];
+  selectedModel: string;
+  onModelChange: (modelId: string) => void;
 }
 
 const URGENCY_LABELS: Record<UrgencyLevel, { text: string; colorClass: string }> = {
@@ -45,6 +48,9 @@ export function DocumentQueue({
   onSearchChange,
   urgencyFilter,
   onUrgencyFilterChange,
+  models,
+  selectedModel,
+  onModelChange,
 }: DocumentQueueProps) {
   const [isDragging, setIsDragging] = useState(false);
 
@@ -137,6 +143,30 @@ export function DocumentQueue({
             </>
           )}
         </label>
+
+        {models.length > 0 && (
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <label
+              htmlFor="queue-ai-model"
+              className="text-xs font-medium text-[#475569] whitespace-nowrap shrink-0"
+            >
+              Modelo de IA
+            </label>
+            <select
+              id="queue-ai-model"
+              value={selectedModel}
+              onChange={(e) => onModelChange(e.target.value)}
+              className="h-9 min-w-0 flex-1 truncate rounded-md border border-[#E2E8F0] bg-white px-2.5 text-xs font-medium text-[#0F172A] focus:border-[#1E3A5F] focus:outline-none"
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                  {!m.configured ? ' (Requer chave no .env)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Search & Urgency Filter */}

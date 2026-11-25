@@ -49,6 +49,7 @@ class DocumentResponse(DocumentExtraction):
 
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=1500)
+    model: Optional[str] = Field(default=None, max_length=80)
 
 
 class RagStructuredAnswer(BaseModel):

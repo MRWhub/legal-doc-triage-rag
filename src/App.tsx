@@ -9,12 +9,18 @@ import {
   deleteDocument,
   fetchDocumentDetail,
   fetchDocuments,
+  fetchModels,
   fetchSamples,
   loadSamples,
   sendChatQuestion,
   uploadPdfDocument,
 } from './lib/api';
-import type { ChatMessage, LegalDocument, SampleDocumentInfo } from './types';
+import type {
+  AiModelOption,
+  ChatMessage,
+  LegalDocument,
+  SampleDocumentInfo,
+} from './types';
 
 const URGENCY_RANK = { ALTA: 1, MEDIA: 2, BAIXA: 3 } as const;
 
@@ -33,6 +39,8 @@ export default function App() {
   const [selectedDoc, setSelectedDoc] = useState<LegalDocument | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [samples, setSamples] = useState<SampleDocumentInfo[]>([]);
+  const [models, setModels] = useState<AiModelOption[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>('gemini-3.1-flash-lite');
 
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
@@ -77,7 +85,18 @@ export default function App() {
     fetchSamples()
       .then(setSamples)
       .catch(() => {
-        // Non-blocking fallback if samples list cannot be fetched
+        // Non-blocking
+      });
+    fetchModels()
+      .then((available) => {
+        setModels(available);
+        const defaultOption = available.find((m) => m.isDefault) ?? available[0];
+        if (defaultOption) {
+          setSelectedModel(defaultOption.id);
+        }
+      })
+      .catch(() => {
+        // Non-blocking
       });
   }, [loadDocumentList]);
 
@@ -131,7 +150,7 @@ export default function App() {
     setActiveView('triage');
 
     try {
-      const created = await uploadPdfDocument(file);
+      const created = await uploadPdfDocument(file, selectedModel);
       setDocuments((prev) => sortByUrgency([created, ...prev]));
       setSelectedDocId(created.id);
       setSelectedDoc(created);
@@ -163,7 +182,7 @@ export default function App() {
     setGlobalError(null);
     setIsLoadingSamples(true);
     try {
-      const created = await loadSamples();
+      const created = await loadSamples(undefined, selectedModel);
       const updated = await fetchDocuments();
       setDocuments(updated);
       const highPriority =
@@ -187,7 +206,7 @@ export default function App() {
     setGlobalError(null);
     setLoadingSlug(slug);
     try {
-      const created = await loadSamples(slug);
+      const created = await loadSamples(slug, selectedModel);
       const updated = await fetchDocuments();
       setDocuments(updated);
       if (created[0]) {
@@ -211,7 +230,7 @@ export default function App() {
     setIsSendingChat(true);
 
     try {
-      const result = await sendChatQuestion(selectedDocId, question);
+      const result = await sendChatQuestion(selectedDocId, question, selectedModel);
       setMessages((prev) => [...prev, result.userMessage, result.assistantMessage]);
     } catch (error) {
       setChatError(
@@ -294,6 +313,9 @@ export default function App() {
             onSearchChange={setSearchQuery}
             urgencyFilter={urgencyFilter}
             onUrgencyFilterChange={setUrgencyFilter}
+            models={models}
+            selectedModel={selectedModel}
+            onModelChange={setSelectedModel}
           />
           <DocumentDetail
             document={selectedDoc}
@@ -317,6 +339,9 @@ export default function App() {
           loadingSlug={loadingSlug}
           onLoadAllSamples={handleLoadAllSamples}
           onLoadSingleSample={handleLoadSingleSample}
+          models={models}
+          selectedModel={selectedModel}
+          onModelChange={setSelectedModel}
         />
       )}
 

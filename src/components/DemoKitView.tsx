@@ -1,5 +1,5 @@
 import { Download, Loader2, Play, Sparkles } from 'lucide-react';
-import type { SampleDocumentInfo, UrgencyLevel } from '../types';
+import type { AiModelOption, SampleDocumentInfo, UrgencyLevel } from '../types';
 
 interface DemoKitViewProps {
   samples: SampleDocumentInfo[];
@@ -7,6 +7,9 @@ interface DemoKitViewProps {
   loadingSlug: string | null;
   onLoadAllSamples: () => void;
   onLoadSingleSample: (slug: string) => void;
+  models: AiModelOption[];
+  selectedModel: string;
+  onModelChange: (modelId: string) => void;
 }
 
 const URGENCY_META: Record<UrgencyLevel, { label: string; colorClass: string }> = {
@@ -21,6 +24,9 @@ export function DemoKitView({
   loadingSlug,
   onLoadAllSamples,
   onLoadSingleSample,
+  models,
+  selectedModel,
+  onModelChange,
 }: DemoKitViewProps) {
   return (
     <main className="mx-auto w-full max-w-5xl px-6 py-10">
@@ -35,28 +41,49 @@ export function DemoKitView({
           <p className="mt-3 text-sm leading-relaxed text-[#475569]">
             Baixe os arquivos PDF gerados dinamicamente para simular o upload manual ao vivo diante
             da banca, ou carregue os três documentos de uma vez diretamente pelo pipeline real de
-            extração paginada, classificação via Gemini Flash e persistência SQLite.
+            extração paginada, classificação via IA e persistência SQLite.
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onLoadAllSamples}
-          disabled={isLoadingSamples || loadingSlug !== null}
-          className="inline-flex h-10 items-center gap-2 rounded-md bg-[#1E3A5F] px-4 text-sm font-medium text-white transition-colors hover:bg-[#152A45] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap shrink-0"
-        >
-          {isLoadingSamples ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              <span>Processando os 3 PDFs...</span>
-            </>
-          ) : (
-            <>
-              <Sparkles className="h-4 w-4" aria-hidden="true" />
-              <span>Carregar os 3 PDFs no Sistema</span>
-            </>
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+          {models.length > 0 && (
+            <label className="flex items-center gap-2 text-xs font-medium text-[#475569]">
+              <span className="whitespace-nowrap">Modelo:</span>
+              <select
+                value={selectedModel}
+                onChange={(e) => onModelChange(e.target.value)}
+                aria-label="Selecionar modelo de IA"
+                className="h-10 rounded-md border border-[#CBD5E1] bg-white px-3 text-xs font-medium text-[#0F172A] focus:border-[#1E3A5F] focus:outline-none"
+              >
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                    {!m.configured ? ' (Requer chave no .env)' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
-        </button>
+
+          <button
+            type="button"
+            onClick={onLoadAllSamples}
+            disabled={isLoadingSamples || loadingSlug !== null}
+            className="inline-flex h-10 items-center gap-2 rounded-md bg-[#1E3A5F] px-4 text-sm font-medium text-white transition-colors hover:bg-[#152A45] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap shrink-0"
+          >
+            {isLoadingSamples ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                <span>Processando os 3 PDFs...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                <span>Carregar os 3 PDFs no Sistema</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       <div className="mt-8 divide-y divide-[#E2E8F0] border border-[#E2E8F0] bg-white">
