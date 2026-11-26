@@ -1,18 +1,27 @@
 import React, { useState } from 'react';
-import { FileUp, Loader2, Search, Sparkles } from 'lucide-react';
-import type { AiModelOption, LegalDocument, UrgencyLevel } from '../types';
+import { Database, FileUp, Loader2, Search } from 'lucide-react';
+import type {
+  AiModelOption,
+  LegalDocument,
+  StagedDocument,
+  TokenMetrics,
+  UrgencyLevel,
+} from '../types';
 
 export type UrgencyFilter = 'ALL' | UrgencyLevel;
 
 interface DocumentQueueProps {
   documents: LegalDocument[];
+  stagedDocument: StagedDocument | null;
+  viewingStaged: boolean;
   selectedId: number | null;
+  isGlobalMode: boolean;
   onSelect: (id: number) => void;
-  onUploadFile: (file: File) => void;
-  onLoadAllSamples: () => void;
+  onSelectStaged: () => void;
+  onOpenGlobalBrain: () => void;
+  onAnalyzeFile: (file: File) => void;
   isLoadingList: boolean;
-  isUploading: boolean;
-  isLoadingSamples: boolean;
+  isAnalyzing: boolean;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   urgencyFilter: UrgencyFilter;
@@ -20,6 +29,7 @@ interface DocumentQueueProps {
   models: AiModelOption[];
   selectedModel: string;
   onModelChange: (modelId: string) => void;
+  tokenMetrics: TokenMetrics | null;
 }
 
 const URGENCY_LABELS: Record<UrgencyLevel, { text: string; colorClass: string }> = {
@@ -37,13 +47,16 @@ const FILTER_OPTIONS: Array<{ id: UrgencyFilter; label: string }> = [
 
 export function DocumentQueue({
   documents,
+  stagedDocument,
+  viewingStaged,
   selectedId,
+  isGlobalMode,
   onSelect,
-  onUploadFile,
-  onLoadAllSamples,
+  onSelectStaged,
+  onOpenGlobalBrain,
+  onAnalyzeFile,
   isLoadingList,
-  isUploading,
-  isLoadingSamples,
+  isAnalyzing,
   searchQuery,
   onSearchChange,
   urgencyFilter,
@@ -51,6 +64,7 @@ export function DocumentQueue({
   models,
   selectedModel,
   onModelChange,
+  tokenMetrics,
 }: DocumentQueueProps) {
   const [isDragging, setIsDragging] = useState(false);
 
@@ -68,14 +82,14 @@ export function DocumentQueue({
     setIsDragging(false);
     const file = e.dataTransfer.files?.[0];
     if (file) {
-      onUploadFile(file);
+      onAnalyzeFile(file);
     }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      onUploadFile(file);
+      onAnalyzeFile(file);
       e.target.value = '';
     }
   };
@@ -104,10 +118,10 @@ export function DocumentQueue({
 
   return (
     <aside
-      aria-label="Fila de documentos triados"
+      aria-label="Memória documental e fila de triagem"
       className="flex w-full flex-col border-b border-[#E2E8F0] bg-white lg:h-[calc(100vh-4rem)] lg:w-[380px] lg:shrink-0 lg:border-r lg:border-b-0 xl:w-[410px]"
     >
-      {/* Upload Dropzone */}
+      {/* Upload Universal Dropzone & AI Model Selector */}
       <div className="border-b border-[#E2E8F0] p-4">
         <label
           onDragOver={handleDragOver}
@@ -117,28 +131,28 @@ export function DocumentQueue({
             isDragging
               ? 'border-[#1E3A5F] bg-[#F1F5F9]'
               : 'border-[#CBD5E1] bg-[#F8FAFC] hover:border-[#1E3A5F]/60 hover:bg-[#F1F5F9]/70'
-          } ${isUploading ? 'pointer-events-none opacity-75' : ''}`}
+          } ${isAnalyzing ? 'pointer-events-none opacity-75' : ''}`}
         >
           <input
             type="file"
-            accept="application/pdf,.pdf"
+            accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
             onChange={handleInputChange}
-            disabled={isUploading}
+            disabled={isAnalyzing}
             className="sr-only"
           />
-          {isUploading ? (
+          {isAnalyzing ? (
             <div className="flex items-center gap-2.5 text-sm font-medium text-[#1E3A5F]">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              <span>Extraindo páginas e classificando com IA...</span>
+              <span>Analisando documento para revisão...</span>
             </div>
           ) : (
             <>
               <div className="flex items-center gap-2 text-sm font-medium text-[#0F172A]">
                 <FileUp className="h-4 w-4 text-[#1E3A5F]" aria-hidden="true" />
-                <span>Arraste um PDF jurídico ou clique para enviar</span>
+                <span>Arraste um arquivo ou clique para triar</span>
               </div>
               <p className="mt-1 text-xs text-[#64748B]">
-                Intimações, petições ou contratos sem CNJ · Máx. 10 MB
+                PDF, TXT ou Markdown · Qualquer domínio · Máx. 10 MB
               </p>
             </>
           )}
@@ -169,6 +183,31 @@ export function DocumentQueue({
         )}
       </div>
 
+      {/* Global Knowledge Base Entry Point */}
+      <div className="border-b border-[#E2E8F0] px-4 py-3">
+        <button
+          type="button"
+          onClick={onOpenGlobalBrain}
+          className={`flex h-10 w-full items-center justify-between rounded-md border px-3.5 text-xs font-medium transition-colors ${
+            isGlobalMode && !viewingStaged
+              ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white'
+              : 'border-[#E2E8F0] bg-[#F8FAFC] text-[#0F172A] hover:border-[#CBD5E1] hover:bg-[#F1F5F9]'
+          }`}
+        >
+          <span className="flex items-center gap-2 whitespace-nowrap">
+            <Database className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Base de Conhecimento (Cérebro)</span>
+          </span>
+          <span
+            className={`tabular-data text-[11px] ${
+              isGlobalMode && !viewingStaged ? 'text-white/85' : 'text-[#64748B]'
+            }`}
+          >
+            {documents.length} {documents.length === 1 ? 'salvo' : 'salvos'}
+          </span>
+        </button>
+      </div>
+
       {/* Search & Urgency Filter */}
       <div className="space-y-3 border-b border-[#E2E8F0] p-4">
         <div className="relative">
@@ -180,15 +219,15 @@ export function DocumentQueue({
             type="search"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Buscar por CNJ, parte, tipo ou arquivo..."
-            aria-label="Buscar documentos na fila"
+            placeholder="Buscar por protocolo, parte, tipo ou arquivo..."
+            aria-label="Buscar documentos salvos na memória"
             className="h-10 w-full rounded-md border border-[#E2E8F0] bg-white pr-3 pl-9 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-[#1E3A5F] focus:outline-none"
           />
         </div>
 
         <div
           role="tablist"
-          aria-label="Filtrar por urgência"
+          aria-label="Filtrar memória por urgência"
           className="grid grid-cols-4 gap-1 rounded-md bg-[#F1F5F9] p-1"
         >
           {FILTER_OPTIONS.map((option) => {
@@ -216,7 +255,33 @@ export function DocumentQueue({
         </div>
       </div>
 
-      {/* Queue List */}
+      {/* Pending Staging Notice (when user analyzed a file but hasn't saved yet) */}
+      {stagedDocument && (
+        <button
+          type="button"
+          onClick={onSelectStaged}
+          className={`block w-full border-b border-[#E2E8F0] px-5 py-3.5 text-left transition-colors ${
+            viewingStaged ? 'bg-[#FEF9C3]/45' : 'bg-[#FFFBEB] hover:bg-[#FEF3C7]/60'
+          }`}
+        >
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-xs font-semibold text-[#B45309]">
+              Em Revisão (Não salvo)
+            </span>
+            <span className="tabular-data text-[11px] text-[#64748B]">
+              {stagedDocument.token_usage.total_tokens.toLocaleString('pt-BR')} tok
+            </span>
+          </div>
+          <p className="mt-0.5 truncate text-sm font-semibold text-[#0F172A]">
+            {stagedDocument.tipo_documento}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-[#64748B]">
+            {stagedDocument.filename} · Clique para salvar ou descartar
+          </p>
+        </button>
+      )}
+
+      {/* Saved Documents Queue */}
       <div className="flex-1 overflow-y-auto divide-y divide-[#E2E8F0]">
         {isLoadingList ? (
           <div className="space-y-4 p-4">
@@ -232,38 +297,18 @@ export function DocumentQueue({
           <div className="flex flex-col items-start px-5 py-8">
             <h3 className="font-editorial text-base font-semibold text-[#0F172A]">
               {documents.length === 0
-                ? 'Nenhum documento na fila'
-                : 'Nenhum resultado para o filtro'}
+                ? 'Memória documental vazia'
+                : 'Nenhum documento corresponde ao filtro'}
             </h3>
             <p className="mt-1.5 text-sm leading-relaxed text-[#475569]">
               {documents.length === 0
-                ? 'Envie um PDF acima ou carregue os 3 documentos jurídicos fictícios para demonstrar a triagem e o chat RAG.'
-                : 'Ajuste o termo de busca ou altere o filtro de urgência para visualizar outros documentos.'}
+                ? 'Envie um arquivo PDF, TXT ou Markdown acima para analisar a ficha extraída e decidir se deseja gravá-lo na memória da IA.'
+                : 'Ajuste o termo de busca ou altere o filtro de urgência para visualizar outros documentos salvos.'}
             </p>
-            {documents.length === 0 && (
-              <button
-                type="button"
-                onClick={onLoadAllSamples}
-                disabled={isLoadingSamples}
-                className="mt-4 inline-flex h-10 items-center gap-2 rounded-md border border-[#1E3A5F] bg-white px-4 text-sm font-medium text-[#1E3A5F] transition-colors hover:bg-[#F1F5F9] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
-              >
-                {isLoadingSamples ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                    <span>Processando 3 PDFs...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4" aria-hidden="true" />
-                    <span>Carregar 3 PDFs de Demo</span>
-                  </>
-                )}
-              </button>
-            )}
           </div>
         ) : (
           filteredDocuments.map((doc) => {
-            const isSelected = doc.id === selectedId;
+            const isSelected = !viewingStaged && !isGlobalMode && doc.id === selectedId;
             const urgencyMeta = URGENCY_LABELS[doc.urgencia];
 
             return (
@@ -272,9 +317,7 @@ export function DocumentQueue({
                 type="button"
                 onClick={() => onSelect(doc.id)}
                 className={`block w-full px-5 py-4 text-left transition-colors focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-[#1E3A5F] ${
-                  isSelected
-                    ? 'bg-[#F1F5F9]'
-                    : 'bg-white hover:bg-[#F8FAFC]'
+                  isSelected ? 'bg-[#F1F5F9]' : 'bg-white hover:bg-[#F8FAFC]'
                 }`}
               >
                 <div className="flex items-baseline justify-between gap-3">
@@ -294,7 +337,7 @@ export function DocumentQueue({
                     ·
                   </span>
                   <span className="tabular-data truncate text-[#475569]">
-                    {doc.numero_processo ?? 'Sem número CNJ'}
+                    {doc.numero_processo ?? 'Sem protocolo/CNJ'}
                   </span>
                 </div>
 
@@ -305,8 +348,8 @@ export function DocumentQueue({
 
                 <div className="mt-1 flex items-center justify-between gap-2 text-xs text-[#64748B]">
                   <span className="truncate">{doc.filename}</span>
-                  <span className="tabular-data shrink-0 font-medium text-[#0F172A]">
-                    {doc.valor_envolvido}
+                  <span className="tabular-data shrink-0 text-[11px] text-[#475569]">
+                    {doc.process_total_tokens.toLocaleString('pt-BR')} tok
                   </span>
                 </div>
               </button>
@@ -314,6 +357,27 @@ export function DocumentQueue({
           })
         )}
       </div>
+
+      {/* Real Accumulated Token Governance Footer */}
+      {tokenMetrics && (
+        <div className="border-t border-[#E2E8F0] bg-[#F8FAFC] px-4 py-2.5 text-[11px] text-[#64748B]">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium text-[#475569]">Consumo acumulado na base</span>
+            <span className="tabular-data font-semibold text-[#0F172A]">
+              {tokenMetrics.total_tokens.toLocaleString('pt-BR')} tokens
+            </span>
+          </div>
+          <div className="mt-0.5 flex items-center justify-between gap-2 tabular-data">
+            <span>
+              {tokenMetrics.total_input_tokens.toLocaleString('pt-BR')} in ·{' '}
+              {tokenMetrics.total_output_tokens.toLocaleString('pt-BR')} out
+            </span>
+            <span>
+              {tokenMetrics.document_count} docs · {tokenMetrics.chat_operations} consultas
+            </span>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

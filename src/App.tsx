@@ -1,28 +1,34 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, X } from 'lucide-react';
-import { ArchitectureView } from './components/ArchitectureView';
-import { DemoKitView } from './components/DemoKitView';
-import { DocumentDetail } from './components/DocumentDetail';
+import { DocumentDetail, type RagChatMode } from './components/DocumentDetail';
 import { DocumentQueue, type UrgencyFilter } from './components/DocumentQueue';
-import { TopBar, type ActiveView } from './components/TopBar';
+import { HelpDocsDrawer } from './components/HelpDocsDrawer';
+import { TopBar } from './components/TopBar';
 import {
+  analyzeDocumentFile,
+  clearGlobalChatMessages,
   deleteDocument,
   fetchDocumentDetail,
   fetchDocuments,
+  fetchGlobalChatMessages,
   fetchModels,
-  fetchSamples,
-  loadSamples,
+  fetchTokenMetrics,
+  saveStagedDocument,
   sendChatQuestion,
-  uploadPdfDocument,
+  sendGlobalChatQuestion,
 } from './lib/api';
 import type {
   AiModelOption,
   ChatMessage,
+  GlobalChatMessage,
+  GlobalCitation,
   LegalDocument,
-  SampleDocumentInfo,
+  StagedDocument,
+  TokenMetrics,
 } from './types';
 
 const URGENCY_RANK = { ALTA: 1, MEDIA: 2, BAIXA: 3 } as const;
+const ALLOWED_EXT_REGEX = /\.(pdf|txt|md)$/i;
 
 function sortByUrgency(docs: LegalDocument[]): LegalDocument[] {
   return [...docs].sort((a, b) => {
@@ -33,29 +39,49 @@ function sortByUrgency(docs: LegalDocument[]): LegalDocument[] {
 }
 
 export default function App() {
-  const [activeView, setActiveView] = useState<ActiveView>('triage');
   const [documents, setDocuments] = useState<LegalDocument[]>([]);
+  const [stagedDocument, setStagedDocument] = useState<StagedDocument | null>(null);
+  const [viewingStaged, setViewingStaged] = useState(false);
+
   const [selectedDocId, setSelectedDocId] = useState<number | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<LegalDocument | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [samples, setSamples] = useState<SampleDocumentInfo[]>([]);
+  const [globalMessages, setGlobalMessages] = useState<GlobalChatMessage[]>([]);
+  const [chatMode, setChatMode] = useState<RagChatMode>('document');
+
   const [models, setModels] = useState<AiModelOption[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3.1-flash-lite');
+  const [tokenMetrics, setTokenMetrics] = useState<TokenMetrics | null>(null);
 
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSavingStaged, setIsSavingStaged] = useState(false);
   const [isSendingChat, setIsSendingChat] = useState(false);
-  const [isLoadingSamples, setIsLoadingSamples] = useState(false);
-  const [loadingSlug, setLoadingSlug] = useState<string | null>(null);
+  const [isSendingGlobalChat, setIsSendingGlobalChat] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [urgencyFilter, setUrgencyFilter] = useState<UrgencyFilter>('ALL');
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [jumpToPageRequest, setJumpToPageRequest] = useState<{
+    docId: number;
+    page: number;
+    nonce: number;
+  } | null>(null);
 
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
 
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const refreshTokenMetrics = useCallback(async () => {
+    try {
+      const metrics = await fetchTokenMetrics();
+      setTokenMetrics(metrics);
+    } catch {
+      // Non-blocking
+    }
+  }, []);
 
   const loadDocumentList = useCallback(async (preferredId?: number | null) => {
     setIsLoadingList(true);
@@ -73,7 +99,7 @@ export default function App() {
       });
     } catch (error) {
       setGlobalError(
-        error instanceof Error ? error.message : 'Falha ao carregar a fila de documentos.'
+        error instanceof Error ? error.message : 'Falha ao carregar a memória documental.'
       );
     } finally {
       setIsLoadingList(false);
@@ -82,8 +108,9 @@ export default function App() {
 
   useEffect(() => {
     void loadDocumentList();
-    fetchSamples()
-      .then(setSamples)
+    void refreshTokenMetrics();
+    fetchGlobalChatMessages()
+      .then(setGlobalMessages)
       .catch(() => {
         // Non-blocking
       });
@@ -98,7 +125,7 @@ export default function App() {
       .catch(() => {
         // Non-blocking
       });
-  }, [loadDocumentList]);
+  }, [loadDocumentList, refreshTokenMetrics]);
 
   useEffect(() => {
     if (selectedDocId === null) {
@@ -135,9 +162,9 @@ export default function App() {
     };
   }, [selectedDocId]);
 
-  const handleUploadFile = async (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      setGlobalError('Selecione um arquivo válido com extensão .pdf.');
+  const handleAnalyzeFile = async (file: File) => {
+    if (!ALLOWED_EXT_REGEX.test(file.name)) {
+      setGlobalError('Formato não suportado. Envie arquivos PDF (.pdf), Texto (.txt) ou Markdown (.md).');
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
@@ -146,24 +173,52 @@ export default function App() {
     }
 
     setGlobalError(null);
-    setIsUploading(true);
-    setActiveView('triage');
+    setIsAnalyzing(true);
 
     try {
-      const created = await uploadPdfDocument(file, selectedModel);
-      setDocuments((prev) => sortByUrgency([created, ...prev]));
-      setSelectedDocId(created.id);
-      setSelectedDoc(created);
-      setMessages([]);
+      const staged = await analyzeDocumentFile(file, selectedModel);
+      setStagedDocument(staged);
+      setViewingStaged(true);
     } catch (error) {
       setGlobalError(
         error instanceof Error
           ? error.message
-          : 'Não foi possível processar o arquivo PDF enviado.'
+          : 'Não foi possível analisar o documento enviado.'
       );
     } finally {
-      setIsUploading(false);
+      setIsAnalyzing(false);
     }
+  };
+
+  const handleSaveStaged = async () => {
+    if (!stagedDocument || isSavingStaged) return;
+    setGlobalError(null);
+    setIsSavingStaged(true);
+
+    try {
+      const saved = await saveStagedDocument(stagedDocument);
+      setDocuments((prev) => sortByUrgency([saved, ...prev]));
+      setStagedDocument(null);
+      setViewingStaged(false);
+      setChatMode('document');
+      setSelectedDocId(saved.id);
+      setSelectedDoc(saved);
+      setMessages([]);
+      await refreshTokenMetrics();
+    } catch (error) {
+      setGlobalError(
+        error instanceof Error
+          ? error.message
+          : 'Erro ao salvar o documento na memória persistente.'
+      );
+    } finally {
+      setIsSavingStaged(false);
+    }
+  };
+
+  const handleDiscardStaged = () => {
+    setStagedDocument(null);
+    setViewingStaged(false);
   };
 
   const handleTriggerUpload = () => {
@@ -173,55 +228,22 @@ export default function App() {
   const handleGlobalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      void handleUploadFile(file);
+      void handleAnalyzeFile(file);
       e.target.value = '';
     }
   };
 
-  const handleLoadAllSamples = async () => {
-    setGlobalError(null);
-    setIsLoadingSamples(true);
-    try {
-      const created = await loadSamples(undefined, selectedModel);
-      const updated = await fetchDocuments();
-      setDocuments(updated);
-      const highPriority =
-        created.find((d) => d.urgencia === 'ALTA') ?? created[0] ?? updated[0] ?? null;
-      if (highPriority) {
-        setSelectedDocId(highPriority.id);
-      }
-      setActiveView('triage');
-    } catch (error) {
-      setGlobalError(
-        error instanceof Error
-          ? error.message
-          : 'Erro ao processar os 3 PDFs de demonstração.'
-      );
-    } finally {
-      setIsLoadingSamples(false);
-    }
+  const handleSelectDocument = (id: number) => {
+    setViewingStaged(false);
+    setChatMode('document');
+    setSelectedDocId(id);
+    setChatError(null);
   };
 
-  const handleLoadSingleSample = async (slug: string) => {
-    setGlobalError(null);
-    setLoadingSlug(slug);
-    try {
-      const created = await loadSamples(slug, selectedModel);
-      const updated = await fetchDocuments();
-      setDocuments(updated);
-      if (created[0]) {
-        setSelectedDocId(created[0].id);
-      }
-      setActiveView('triage');
-    } catch (error) {
-      setGlobalError(
-        error instanceof Error
-          ? error.message
-          : 'Erro ao processar o documento de demonstração.'
-      );
-    } finally {
-      setLoadingSlug(null);
-    }
+  const handleOpenGlobalBrain = () => {
+    setViewingStaged(false);
+    setChatMode('global');
+    setChatError(null);
   };
 
   const handleSendQuestion = async (question: string) => {
@@ -232,6 +254,17 @@ export default function App() {
     try {
       const result = await sendChatQuestion(selectedDocId, question, selectedModel);
       setMessages((prev) => [...prev, result.userMessage, result.assistantMessage]);
+      setSelectedDoc((prev) =>
+        prev ? { ...prev, process_total_tokens: result.processTotalTokens } : prev
+      );
+      setDocuments((prev) =>
+        prev.map((d) =>
+          d.id === selectedDocId
+            ? { ...d, process_total_tokens: result.processTotalTokens }
+            : d
+        )
+      );
+      await refreshTokenMetrics();
     } catch (error) {
       setChatError(
         error instanceof Error
@@ -241,6 +274,48 @@ export default function App() {
     } finally {
       setIsSendingChat(false);
     }
+  };
+
+  const handleSendGlobalQuestion = async (question: string) => {
+    setChatError(null);
+    setIsSendingGlobalChat(true);
+
+    try {
+      const result = await sendGlobalChatQuestion(question, selectedModel);
+      setGlobalMessages((prev) => [...prev, result.userMessage, result.assistantMessage]);
+      await refreshTokenMetrics();
+    } catch (error) {
+      setChatError(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível consultar a Base de Conhecimento neste momento.'
+      );
+    } finally {
+      setIsSendingGlobalChat(false);
+    }
+  };
+
+  const handleClearGlobalChat = async () => {
+    try {
+      await clearGlobalChatMessages();
+      setGlobalMessages([]);
+      await refreshTokenMetrics();
+    } catch (error) {
+      setGlobalError(
+        error instanceof Error ? error.message : 'Erro ao limpar histórico da Base Geral.'
+      );
+    }
+  };
+
+  const handleOpenCitation = (citation: GlobalCitation) => {
+    setViewingStaged(false);
+    setChatMode('document');
+    setSelectedDocId(citation.document_id);
+    setJumpToPageRequest({
+      docId: citation.document_id,
+      page: citation.page,
+      nonce: Date.now(),
+    });
   };
 
   const handleDeleteDocument = async (id: number) => {
@@ -254,6 +329,7 @@ export default function App() {
         }
         return next;
       });
+      await refreshTokenMetrics();
     } catch (error) {
       setGlobalError(
         error instanceof Error ? error.message : 'Erro ao remover o documento.'
@@ -266,16 +342,15 @@ export default function App() {
       <input
         ref={hiddenFileInputRef}
         type="file"
-        accept="application/pdf,.pdf"
+        accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
         onChange={handleGlobalFileChange}
         className="sr-only"
       />
 
       <TopBar
-        activeView={activeView}
-        onChangeView={setActiveView}
+        onOpenHelp={() => setIsHelpOpen(true)}
         onTriggerUpload={handleTriggerUpload}
-        isUploading={isUploading}
+        isAnalyzing={isAnalyzing}
       />
 
       {globalError && (
@@ -298,54 +373,60 @@ export default function App() {
         </div>
       )}
 
-      {activeView === 'triage' && (
-        <div className="flex flex-1 flex-col lg:flex-row">
-          <DocumentQueue
-            documents={documents}
-            selectedId={selectedDocId}
-            onSelect={setSelectedDocId}
-            onUploadFile={handleUploadFile}
-            onLoadAllSamples={handleLoadAllSamples}
-            isLoadingList={isLoadingList}
-            isUploading={isUploading}
-            isLoadingSamples={isLoadingSamples}
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
-            urgencyFilter={urgencyFilter}
-            onUrgencyFilterChange={setUrgencyFilter}
-            models={models}
-            selectedModel={selectedModel}
-            onModelChange={setSelectedModel}
-          />
-          <DocumentDetail
-            document={selectedDoc}
-            messages={messages}
-            isLoadingDetail={isLoadingDetail}
-            isSendingChat={isSendingChat}
-            chatError={chatError}
-            onSendQuestion={handleSendQuestion}
-            onDeleteDocument={handleDeleteDocument}
-            onLoadAllSamples={handleLoadAllSamples}
-            onTriggerUpload={handleTriggerUpload}
-            isLoadingSamples={isLoadingSamples}
-          />
-        </div>
-      )}
-
-      {activeView === 'demo_kit' && (
-        <DemoKitView
-          samples={samples}
-          isLoadingSamples={isLoadingSamples}
-          loadingSlug={loadingSlug}
-          onLoadAllSamples={handleLoadAllSamples}
-          onLoadSingleSample={handleLoadSingleSample}
+      <div className="flex flex-1 flex-col lg:flex-row">
+        <DocumentQueue
+          documents={documents}
+          stagedDocument={stagedDocument}
+          viewingStaged={viewingStaged}
+          selectedId={selectedDocId}
+          isGlobalMode={chatMode === 'global'}
+          onSelect={handleSelectDocument}
+          onSelectStaged={() => setViewingStaged(true)}
+          onOpenGlobalBrain={handleOpenGlobalBrain}
+          onAnalyzeFile={handleAnalyzeFile}
+          isLoadingList={isLoadingList}
+          isAnalyzing={isAnalyzing}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          urgencyFilter={urgencyFilter}
+          onUrgencyFilterChange={setUrgencyFilter}
           models={models}
           selectedModel={selectedModel}
           onModelChange={setSelectedModel}
+          tokenMetrics={tokenMetrics}
         />
-      )}
 
-      {activeView === 'architecture' && <ArchitectureView />}
+        <DocumentDetail
+          stagedDocument={stagedDocument}
+          viewingStaged={viewingStaged}
+          isSavingStaged={isSavingStaged}
+          onSaveStaged={handleSaveStaged}
+          onDiscardStaged={handleDiscardStaged}
+          document={selectedDoc}
+          savedDocumentsCount={documents.length}
+          messages={messages}
+          globalMessages={globalMessages}
+          chatMode={chatMode}
+          onChangeChatMode={(mode) => {
+            setViewingStaged(false);
+            setChatMode(mode);
+            setChatError(null);
+          }}
+          isLoadingDetail={isLoadingDetail}
+          isSendingChat={isSendingChat}
+          isSendingGlobalChat={isSendingGlobalChat}
+          chatError={chatError}
+          onSendQuestion={handleSendQuestion}
+          onSendGlobalQuestion={handleSendGlobalQuestion}
+          onClearGlobalChat={handleClearGlobalChat}
+          onOpenCitation={handleOpenCitation}
+          onDeleteDocument={handleDeleteDocument}
+          onTriggerUpload={handleTriggerUpload}
+          jumpToPageRequest={jumpToPageRequest}
+        />
+      </div>
+
+      <HelpDocsDrawer isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>
   );
 }

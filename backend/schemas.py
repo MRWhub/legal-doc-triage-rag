@@ -1,8 +1,11 @@
-from datetime import datetime
+"""Contratos Pydantic v2 para a API FastAPI do JurisTriage."""
+
+from __future__ import annotations
+
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class UrgencyLevel(str, Enum):
@@ -11,40 +14,37 @@ class UrgencyLevel(str, Enum):
     BAIXA = "BAIXA"
 
 
-class DocumentExtraction(BaseModel):
-    tipo_documento: str = Field(
-        ..., description="Classificação jurídica do documento (ex.: Intimação Judicial, Contrato Comercial)."
-    )
-    numero_processo: Optional[str] = Field(
-        default=None,
-        description="Número CNJ do processo judicial, ou null quando inexistente (ex.: contratos).",
-    )
-    partes_envolvidas: List[str] = Field(
-        default_factory=list,
-        description="Lista das partes envolvidas com seus respectivos papéis.",
-    )
-    prazo_ou_vigencia: str = Field(
-        ..., description="Prazo fatal processual ou período de vigência contratual."
-    )
-    valor_envolvido: str = Field(
-        ..., description="Valor da causa, condenação, multa ou valor do contrato."
-    )
-    urgencia: UrgencyLevel = Field(
-        ..., description="Severidade operacional da triagem: ALTA, MEDIA ou BAIXA."
-    )
-    resumo_executivo: str = Field(
-        ..., description="Síntese objetiva em 2 a 3 frases sobre objeto, risco e ação recomendada."
-    )
+class TokenUsage(BaseModel):
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
 
 
-class DocumentResponse(DocumentExtraction):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
+class StagedDocumentResponse(BaseModel):
     filename: str
+    file_format: str
+    tipo_documento: str
+    numero_processo: Optional[str] = None
+    partes_envolvidas: List[str] = Field(default_factory=list)
+    prazo_ou_vigencia: str
+    valor_envolvido: str
+    urgencia: UrgencyLevel
+    resumo_executivo: str
+    suggested_questions: List[str] = Field(default_factory=list)
     raw_text: str
-    page_count: int
-    created_at: datetime
+    page_count: int = Field(ge=1)
+    extraction_model: str = ""
+    token_usage: TokenUsage = Field(default_factory=TokenUsage)
+
+
+class SaveDocumentRequest(StagedDocumentResponse):
+    """Payload enviado quando o usuário confirma o botão 'Salvar na Memória'."""
+
+
+class DocumentResponse(StagedDocumentResponse):
+    id: int
+    process_total_tokens: int = Field(default=0, ge=0)
+    created_at: str
 
 
 class ChatRequest(BaseModel):
@@ -52,32 +52,41 @@ class ChatRequest(BaseModel):
     model: Optional[str] = Field(default=None, max_length=80)
 
 
-class RagStructuredAnswer(BaseModel):
-    resposta: str = Field(
-        ...,
-        description="Resposta estritamente baseada no documento citando [Página X], ou recusa clara se ausente.",
-    )
-    paginas_citadas: List[int] = Field(
-        default_factory=list,
-        description="Lista ordenada dos números de páginas usadas como evidência.",
-    )
-    encontrado_no_documento: bool = Field(
-        ...,
-        description="True quando a resposta consta explicitamente no texto; False quando ausente.",
-    )
-
-
 class ChatMessageResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     document_id: int
     role: str
     content: str
-    cited_pages: List[int]
-    created_at: datetime
+    cited_pages: List[int] = Field(default_factory=list)
+    token_usage: TokenUsage = Field(default_factory=TokenUsage)
+    model_used: str = ""
+    created_at: str
 
 
 class DocumentDetailResponse(BaseModel):
     document: DocumentResponse
     messages: List[ChatMessageResponse]
+
+
+class GlobalCitation(BaseModel):
+    document_id: int
+    filename: str
+    page: int
+
+
+class GlobalChatMessageResponse(BaseModel):
+    id: int
+    role: str
+    content: str
+    citations: List[GlobalCitation] = Field(default_factory=list)
+    token_usage: TokenUsage = Field(default_factory=TokenUsage)
+    model_used: str = ""
+    created_at: str
+
+
+class TokenMetricsResponse(BaseModel):
+    document_count: int
+    chat_operations: int
+    total_input_tokens: int
+    total_output_tokens: int
+    total_tokens: int
